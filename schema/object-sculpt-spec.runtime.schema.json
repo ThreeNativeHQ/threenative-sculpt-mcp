@@ -17,7 +17,9 @@
     "qualityTargets"
   ],
   "properties": {
-    "schemaVersion": { "type": ["string", "number"] },
+    "schemaVersion": {
+      "anyOf": [{ "type": "string" }, { "type": "number" }]
+    },
     "targetName": { "type": "string", "minLength": 1 },
     "suitability": { "enum": ["pass", "conditional", "reject"] },
     "coordinateFrame": { "type": "object" },
@@ -35,8 +37,8 @@
         }
       }
     },
-    "materials": { "type": "array", "minItems": 1 },
-    "repetitionSystems": { "type": "array" },
+    "materials": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+    "repetitionSystems": { "type": "array", "items": { "type": "object" } },
     "proceduralStrategy": {
       "type": "array",
       "minItems": 1,
@@ -44,16 +46,63 @@
     },
     "preSpecAssessment": {
       "type": "object",
-      "required": ["complexity", "detailInventory"]
+      "required": ["complexity", "detailInventory"],
+      "properties": {
+        "complexity": {
+          "type": "object",
+          "required": ["tier"],
+          "properties": {
+            "tier": {
+              "enum": ["simple", "moderate", "complex", "ultra-complex"]
+            }
+          }
+        },
+        "detailInventory": {
+          "type": "object",
+          "required": ["details"],
+          "properties": {
+            "details": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
+          }
+        }
+      }
     },
     "qualityContract": {
       "type": "object",
-      "required": ["minimumSpecDepth"]
+      "required": ["minimumSpecDepth"],
+      "properties": {
+        "minimumSpecDepth": {
+          "type": "object",
+          "required": [
+            "macroComponents",
+            "mesoComponents",
+            "microFeatureGroups",
+            "materialLayers",
+            "repetitionSystems",
+            "reviewViewpoints"
+          ],
+          "properties": {
+            "macroComponents": { "type": "integer", "minimum": 0 },
+            "mesoComponents": { "type": "integer", "minimum": 0 },
+            "microFeatureGroups": { "type": "integer", "minimum": 0 },
+            "materialLayers": { "type": "integer", "minimum": 0 },
+            "repetitionSystems": { "type": "integer", "minimum": 0 },
+            "reviewViewpoints": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
     },
     "qualityTargets": {
       "type": "object",
-      "required": ["reviewViewpoints"]
+      "required": ["reviewViewpoints"],
+      "properties": {
+        "reviewViewpoints": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
     }
   }
 }
-

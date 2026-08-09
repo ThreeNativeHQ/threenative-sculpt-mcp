@@ -1,33 +1,14 @@
+import { readFileSync } from "node:fs";
+import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { gateObjectSculptSpec } from "../src/spec.js";
 
+function json(path: string) {
+  return JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
+}
+
 function simpleSpec() {
-  return {
-    schemaVersion: "2.1",
-    targetName: "Reference object",
-    suitability: "pass",
-    coordinateFrame: {},
-    silhouette: {},
-    componentTree: [{ id: "root", level: "macro", localFeatures: [] }],
-    materials: [{ id: "base" }],
-    repetitionSystems: [],
-    proceduralStrategy: ["Build the observed silhouette"],
-    preSpecAssessment: {
-      complexity: { tier: "simple" },
-      detailInventory: { details: [{}, {}, {}] }
-    },
-    qualityContract: {
-      minimumSpecDepth: {
-        macroComponents: 1,
-        mesoComponents: 0,
-        microFeatureGroups: 0,
-        materialLayers: 1,
-        repetitionSystems: 0,
-        reviewViewpoints: 2
-      }
-    },
-    qualityTargets: { reviewViewpoints: ["front", "three-quarter"] }
-  };
+  return json("examples/simple-object-sculpt-spec.json");
 }
 
 describe("ObjectSculptSpec runtime gate", () => {
@@ -41,12 +22,31 @@ describe("ObjectSculptSpec runtime gate", () => {
     expect(result.issues.map((issue) => issue.region)).toContain("componentTree");
   });
 
-  it("accepts a simple spec at every canonical depth threshold", () => {
-    expect(gateObjectSculptSpec(simpleSpec())).toMatchObject({
+  it("accepts the packaged example through JSON Schema and the semantic gate", () => {
+    const schema = json("schema/object-sculpt-spec.runtime.schema.json");
+    const spec = simpleSpec();
+    const ajv = new Ajv2020({ strict: true, allErrors: true });
+    const validate = ajv.compile(schema);
+    expect(validate(spec), ajv.errorsText(validate.errors)).toBe(true);
+    expect(gateObjectSculptSpec(spec)).toMatchObject({
       valid: true,
       tier: "simple",
       requiredDepth: { reviewViewpoints: 2, detailInventory: 3 }
     });
+  });
+
+  it("rejects the formerly schema-valid mismatched nested shape", () => {
+    const schema = json("schema/object-sculpt-spec.runtime.schema.json");
+    const spec = simpleSpec();
+    spec.preSpecAssessment = { complexity: "simple", detailInventory: [] };
+    const validate = new Ajv2020({ strict: true, allErrors: true }).compile(schema);
+    expect(validate(spec)).toBe(false);
+    expect(validate.errors?.map((error) => error.instancePath)).toEqual(
+      expect.arrayContaining([
+        "/preSpecAssessment/complexity",
+        "/preSpecAssessment/detailInventory"
+      ])
+    );
   });
 
   it("fails a shallow moderate spec with named count gaps", () => {
@@ -59,4 +59,3 @@ describe("ObjectSculptSpec runtime gate", () => {
     );
   });
 });
-

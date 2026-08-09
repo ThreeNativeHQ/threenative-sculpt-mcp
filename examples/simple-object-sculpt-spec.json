@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "2.1",
+  "targetName": "Reference object",
+  "suitability": "pass",
+  "coordinateFrame": {},
+  "silhouette": {},
+  "componentTree": [
+    {
+      "id": "root",
+      "level": "macro",
+      "localFeatures": []
+    }
+  ],
+  "materials": [
+    {
+      "id": "base"
+    }
+  ],
+  "repetitionSystems": [],
+  "proceduralStrategy": [
+    "Build the observed silhouette"
+  ],
+  "preSpecAssessment": {
+    "complexity": {
+      "tier": "simple"
+    },
+    "detailInventory": {
+      "details": [
+        { "id": "primary-outline" },
+        { "id": "dominant-proportion" },
+        { "id": "material-break" }
+      ]
+    }
+  },
+  "qualityContract": {
+    "minimumSpecDepth": {
+      "macroComponents": 1,
+      "mesoComponents": 0,
+      "microFeatureGroups": 0,
+      "materialLayers": 1,
+      "repetitionSystems": 0,
+      "reviewViewpoints": 2
+    }
+  },
+  "qualityTargets": {
+    "reviewViewpoints": [
+      "front",
+      "three-quarter"
+    ]
+  }
+}

@@ -35,6 +35,46 @@ its explicit MCP runtime subset in `schema/object-sculpt-spec.runtime.schema.jso
 the upstream simple/moderate/complex/ultra-complex depth thresholds in code. The eight locked
 passes are blockout, structural, form, material, surface, lighting, interaction, and optimization.
 
+The nested shapes consumed by `sculpt_spec_gate` are objects: the tier is
+`preSpecAssessment.complexity.tier`, and inventory entries are in
+`preSpecAssessment.detailInventory.details`. This complete simple-tier example is also packaged
+as `examples/simple-object-sculpt-spec.json`:
+
+```json
+{
+  "schemaVersion": "2.1",
+  "targetName": "Reference object",
+  "suitability": "pass",
+  "coordinateFrame": {},
+  "silhouette": {},
+  "componentTree": [{ "id": "root", "level": "macro", "localFeatures": [] }],
+  "materials": [{ "id": "base" }],
+  "repetitionSystems": [],
+  "proceduralStrategy": ["Build the observed silhouette"],
+  "preSpecAssessment": {
+    "complexity": { "tier": "simple" },
+    "detailInventory": {
+      "details": [
+        { "id": "primary-outline" },
+        { "id": "dominant-proportion" },
+        { "id": "material-break" }
+      ]
+    }
+  },
+  "qualityContract": {
+    "minimumSpecDepth": {
+      "macroComponents": 1,
+      "mesoComponents": 0,
+      "microFeatureGroups": 0,
+      "materialLayers": 1,
+      "repetitionSystems": 0,
+      "reviewViewpoints": 2
+    }
+  },
+  "qualityTargets": { "reviewViewpoints": ["front", "three-quarter"] }
+}
+```
+
 Deterministic pixel comparison is diagnostic evidence. `sculpt_pass_gate` requires a semantic
 review of the same image pair and its critical features; absent or ambiguous review evidence
 returns `retry` (or `stop` at the configured final attempt), never `advance`.

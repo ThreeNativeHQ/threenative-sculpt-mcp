@@ -78,13 +78,16 @@ export async function inspectImage(path: string, label: string): Promise<{
     if (!metadata.width || !metadata.height) {
       throw new Error("decoded image has no positive dimensions");
     }
-    const stats = await pipeline.stats();
-    const colorChannels = stats.channels.slice(0, 3);
+    const stats = await pipeline.clone().stats();
+    const colorChannels = stats.channels.slice(
+      0,
+      metadata.hasAlpha ? Math.max(0, stats.channels.length - 1) : stats.channels.length
+    );
     return {
       width: metadata.width,
       height: metadata.height,
       uniform:
-        colorChannels.length === 3 &&
+        colorChannels.length > 0 &&
         colorChannels.every((channel) => channel.min === channel.max)
     };
   } catch (error) {

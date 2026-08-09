@@ -68,5 +68,21 @@ describe("sculpt comparison", () => {
       "capture image is all one colour"
     );
   });
-});
 
+  it("fails closed for a decoded 1x1 solid PNG", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "sculpt-one-pixel-"));
+    const reference = path.join(directory, "reference.png");
+    const capture = path.join(directory, "capture.png");
+    await gradientPng(reference);
+    await writeFile(
+      capture,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64"
+      )
+    );
+    await expect(compareImages(reference, capture, [])).rejects.toThrow(
+      "capture image is all one colour"
+    );
+  });
+});
