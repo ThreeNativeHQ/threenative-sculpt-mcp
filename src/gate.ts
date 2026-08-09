@@ -39,25 +39,32 @@ export function gatePass(input: PassGateInput): PassGateResult {
   if (compare.status !== "evidence" || compare.authority !== "diagnostic-only") {
     reasons.push("comparison evidence contract is missing or unrecognized");
   }
+  if (compare.ambiguous) {
+    reasons.push("deterministic comparison evidence is explicitly ambiguous");
+  }
   if (
-    compare.ambiguous ||
-    !Number.isFinite(compare.overall.confidence) ||
-    compare.overall.confidence < input.minimumConfidence
+    !Number.isFinite(compare.overall.score) ||
+    !Number.isFinite(compare.overall.confidence)
   ) {
-    reasons.push("deterministic comparison evidence is ambiguous or low-confidence");
+    reasons.push("deterministic comparison evidence contains non-finite values");
+  } else {
+    if (compare.overall.score < input.threshold) {
+      corrections.add(
+        `use the diagnostic comparison score ${compare.overall.score} to target visual corrections`
+      );
+    }
+    if (compare.overall.confidence < input.minimumConfidence) {
+      corrections.add("treat the low-confidence deterministic diagnostics cautiously");
+    }
   }
-  if (!Number.isFinite(compare.overall.score) || compare.overall.score < input.threshold) {
-    reasons.push(`deterministic comparison score is below ${input.threshold}`);
-  }
+  if (compare.regions.length === 0) reasons.push("comparison evidence contains no regions");
   for (const region of compare.regions) {
-    if (
-      !Number.isFinite(region.score) ||
-      !Number.isFinite(region.confidence) ||
-      region.confidence < input.minimumConfidence
-    ) {
-      reasons.push(`region "${region.id}" has ambiguous evidence`);
+    if (!Number.isFinite(region.score) || !Number.isFinite(region.confidence)) {
+      reasons.push(`region "${region.id}" contains non-finite evidence`);
     } else if (region.score < input.threshold) {
-      reasons.push(`region "${region.id}" score is below ${input.threshold}`);
+      corrections.add(`use low diagnostic score for region "${region.id}" to target corrections`);
+    } else if (region.confidence < input.minimumConfidence) {
+      corrections.add(`treat region "${region.id}" diagnostics as low-confidence`);
     }
     for (const correction of region.corrections) corrections.add(correction);
   }
@@ -91,8 +98,10 @@ export function gatePass(input: PassGateInput): PassGateResult {
     return {
       decision: "advance",
       passId: input.passId,
-      reasons: ["deterministic diagnostics and semantic critical-feature review are unambiguous"],
-      corrections: []
+      reasons: [
+        "comparison is not ambiguous and semantic review plus critical features meet their thresholds"
+      ],
+      corrections: [...corrections]
     };
   }
   return {
@@ -102,4 +111,3 @@ export function gatePass(input: PassGateInput): PassGateResult {
     corrections: [...corrections]
   };
 }
-

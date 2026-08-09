@@ -178,7 +178,7 @@ export async function createSculptServer(): Promise<McpServer> {
     "sculpt_pass_gate",
     {
       description:
-        "Return advance, retry, or stop from deterministic diagnostics plus semantic critical-feature review. Missing or ambiguous evidence always retries or stops.",
+        "Return advance, retry, or stop. Semantic review controls advancement; deterministic scores supply corrections, while an explicitly ambiguous comparison blocks advancement.",
       inputSchema: z.object({
         passId: z.enum(PASS_ORDER),
         compareResult: compareResultSchema,

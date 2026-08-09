@@ -124,4 +124,41 @@ describe("live MCP surface", () => {
     const text = result.content.find((item) => item.type === "text")?.text ?? "{}";
     expect(JSON.parse(text)).toMatchObject({ decision: "retry", passId: "blockout" });
   });
+
+  it("makes the live pass gate advance on strong semantics despite low diagnostics", async () => {
+    const client = await connectedClient();
+    const reference = await referenceImage();
+    const comparison = await client.callTool({
+      name: "sculpt_compare",
+      arguments: { referencePath: reference, capturePath: reference }
+    });
+    const comparisonText = comparison.content.find((item) => item.type === "text")?.text ?? "{}";
+    const compareResult = JSON.parse(comparisonText) as {
+      overall: { score: number; confidence: number };
+      regions: Array<{ score: number; confidence: number; corrections: string[] }>;
+      ambiguous: boolean;
+    };
+    compareResult.overall = { score: 0.417777, confidence: 0.4 };
+    compareResult.regions[0]!.score = 0.32;
+    compareResult.regions[0]!.confidence = 0.35;
+    compareResult.regions[0]!.corrections = ["recheck material response"];
+    compareResult.ambiguous = false;
+    const result = await client.callTool({
+      name: "sculpt_pass_gate",
+      arguments: {
+        passId: "lighting-pass",
+        compareResult,
+        semanticReview: {
+          score: 0.82,
+          confidence: 0.86,
+          notes: "Critical visual features match.",
+          criticalFeatures: [
+            { id: "silhouette", score: 0.84, threshold: 0.8, critical: true }
+          ]
+        }
+      }
+    });
+    const text = result.content.find((item) => item.type === "text")?.text ?? "{}";
+    expect(JSON.parse(text)).toMatchObject({ decision: "advance", passId: "lighting-pass" });
+  });
 });

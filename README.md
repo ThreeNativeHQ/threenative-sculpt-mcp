@@ -78,6 +78,9 @@ as `examples/simple-object-sculpt-spec.json`:
 Deterministic pixel comparison is diagnostic evidence. `sculpt_pass_gate` requires a semantic
 review of the same image pair and its critical features; absent or ambiguous review evidence
 returns `retry` (or `stop` at the configured final attempt), never `advance`.
+Low deterministic scores and regional confidence produce correction guidance but do not block
+an otherwise passing semantic review when `compareResult.ambiguous` is `false`. An explicitly
+ambiguous comparison still blocks advancement.
 
 `sculpt_compare` reads PNG, JPEG, WebP, GIF, AVIF, and TIFF through Node's `sharp` package.
 It rejects missing, zero-byte, undecodable, and all-one-colour captures. It does not include

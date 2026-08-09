@@ -83,6 +83,49 @@ describe("pass gate", () => {
     ).toBe("advance");
   });
 
+  it("advances on strong semantic evidence despite low diagnostic scores", () => {
+    const lowDiagnostic = evidence({
+      overall: { score: 0.417777, confidence: 0.4 },
+      regions: [
+        {
+          id: "full",
+          pixels: 4096,
+          score: 0.32,
+          confidence: 0.35,
+          signals: {
+            structuralSimilarity: 0.3,
+            perceptualHashSimilarity: 0.4,
+            colorSimilarity: 0.35,
+            deltaE00: 24
+          },
+          corrections: ["recheck material response"]
+        }
+      ],
+      ambiguous: false
+    });
+    const result = gatePass({
+      passId: "lighting-pass",
+      compareResult: lowDiagnostic,
+      semanticReview: {
+        score: 0.82,
+        confidence: 0.86,
+        notes: "The corrected silhouette and critical features match the reference.",
+        criticalFeatures: [
+          { id: "silhouette", score: 0.84, threshold: 0.8, critical: true },
+          { id: "identity-feature", score: 0.81, threshold: 0.78, critical: true }
+        ]
+      },
+      threshold: 0.7,
+      minimumConfidence: 0.65,
+      attempt: 2,
+      maxAttempts: 3
+    });
+    expect(result.decision).toBe("advance");
+    expect(result.corrections).toEqual(
+      expect.arrayContaining(["recheck material response"])
+    );
+  });
+
   it("stops after the bounded final failed attempt", () => {
     expect(
       gatePass({
@@ -97,4 +140,3 @@ describe("pass gate", () => {
     ).toBe("stop");
   });
 });
-
