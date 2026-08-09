@@ -1,0 +1,32 @@
+threenative-sculpt-mcp
+Copyright 2026 ThreeNative contributors
+
+This product includes material derived from img2threejs
+(https://github.com/img2threejs/img2threejs), upstream revision
+d6673386f89673a58736f8d398dd16ece67874f5, Copyright 2026 hoainho,
+licensed under the Apache License, Version 2.0.
+
+Retained verbatim from img2threejs:
+  grimoire/**
+
+Adapted from img2threejs:
+  forge/stage2_spec/new_pre_spec_assessment.py
+  forge/stage2_spec/new_sculpt_spec.py
+  forge/stage2_spec/validate_sculpt_spec.py
+  forge/stage3_build/orchestrate_passes.py
+  forge/stage4_review/append_review.py
+
+Ported to TypeScript from img2threejs:
+  forge/_shared/color_metrics.py
+  forge/_shared/image_hash.py
+
+All adapted and ported files have been rewritten for a pure-Node MCP server.
+
+img2threejs does not publish a standalone ObjectSculptSpec JSON Schema. The file
+schema/object-sculpt-spec.runtime.schema.json is therefore an MCP-specific runtime
+contract for the subset this server consumes; it is not represented as an upstream file.
+
+All upstream grimoire files remain in this source distribution for license and audit
+fidelity. The MCP resource catalog intentionally excludes retained pages that contain
+concrete fenced GLSL or material recipes, so the server serves technique without becoming
+the author of a game's look.

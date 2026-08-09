@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://threenative.dev/schemas/object-sculpt-spec.runtime.schema.json",
+  "title": "MCP runtime ObjectSculptSpec contract",
+  "$comment": "img2threejs has no standalone ObjectSculptSpec JSON Schema. This runtime contract documents the subset consumed by threenative-sculpt-mcp; semantic depth thresholds are enforced in src/spec.ts.",
+  "type": "object",
+  "required": [
+    "targetName",
+    "suitability",
+    "coordinateFrame",
+    "silhouette",
+    "componentTree",
+    "materials",
+    "proceduralStrategy",
+    "preSpecAssessment",
+    "qualityContract",
+    "qualityTargets"
+  ],
+  "properties": {
+    "schemaVersion": { "type": ["string", "number"] },
+    "targetName": { "type": "string", "minLength": 1 },
+    "suitability": { "enum": ["pass", "conditional", "reject"] },
+    "coordinateFrame": { "type": "object" },
+    "silhouette": { "type": "object" },
+    "componentTree": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "level"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "level": { "enum": ["macro", "meso", "micro"] },
+          "localFeatures": { "type": "array" }
+        }
+      }
+    },
+    "materials": { "type": "array", "minItems": 1 },
+    "repetitionSystems": { "type": "array" },
+    "proceduralStrategy": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "preSpecAssessment": {
+      "type": "object",
+      "required": ["complexity", "detailInventory"]
+    },
+    "qualityContract": {
+      "type": "object",
+      "required": ["minimumSpecDepth"]
+    },
+    "qualityTargets": {
+      "type": "object",
+      "required": ["reviewViewpoints"]
+    }
+  }
+}
+
