@@ -88,7 +88,7 @@ export async function createSculptServer(): Promise<McpServer> {
   const catalog = await loadGrimoireCatalog();
   const validTopics = new Set(catalog.pages.map((page) => page.topic));
   const server = new McpServer(
-    { name: "threenative-sculpt-mcp", version: "0.1.0" },
+    { name: "threenative-sculpt-mcp", version: "0.1.1" },
     {
       instructions:
         "Use sculpt_plan, read its technique-safe grimoire resources, pass sculpt_spec_gate before writing code, then compare each playtest capture and call sculpt_pass_gate. Pixel metrics never replace semantic image review."
