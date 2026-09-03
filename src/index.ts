@@ -6,6 +6,31 @@ import {
   SCULPT_PROFILES,
   STAGE_R_STEPS
 } from "./constants.js";
+import {
+  accepts,
+  bandFeatures,
+  checkMedialLateral,
+  footSlide,
+  gaitParameters,
+  resolveChains,
+  runTargets,
+  synthesiseGaitTracks,
+  targetBandToJSON,
+  walkTargets
+} from "./action-design.js";
+import {
+  classify,
+  decideLoop,
+  loadClipPayload,
+  measureClip,
+  nameClip,
+  report as reportClipFeatures
+} from "./clip-features.js";
+import { readRig, resolveLandmarks, sampleClips } from "./glb-rig-reference.js";
+import { validateRigPayload } from "./rig-payload.js";
+import { SkinBinding, blendWeights, validateBinding } from "./skin-conditioning.js";
+import { freeze as freezeMesh, Manifest, verify as verifyMesh } from "./mesh-parity.js";
+import { runGates } from "./rig-gates.js";
 import { gatePass } from "./gate.js";
 import { findGrimoirePage, loadGrimoireCatalog } from "./grimoire.js";
 import { compareImages, inspectImage } from "./image.js";
@@ -23,6 +48,22 @@ function failure(error: unknown) {
     { error: error instanceof Error ? error.message : String(error), failedClosed: true },
     true
   );
+}
+
+function failureWithReport(error: unknown, report: unknown) {
+  return response(
+    {
+      error: error instanceof Error ? error.message : String(error),
+      failedClosed: true,
+      report
+    },
+    true
+  );
+}
+
+function objectPayload(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${label} must be an object`);
+  return value as Record<string, unknown>;
 }
 
 const regionSchema = z
@@ -239,6 +280,241 @@ export async function createSculptServer(): Promise<McpServer> {
     }
   );
 
+  server.registerTool(
+    "sculpt_clip_measure",
+    {
+      description:
+        "Measure every sampled animation clip, classify all matching motion labels, name intent honestly, decide looping from pose return, and surface joint scale.",
+      inputSchema: z.object({ payload: z.unknown() }).strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async ({ payload }) => {
+      try {
+        const result = reportClipFeatures(payload);
+        const tripwire = result.scaleTripwire as { tripped: boolean };
+        const sourceScalesJoints = typeof payload === "object" && payload !== null && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>).sourceScalesJoints
+          : undefined;
+        return tripwire.tripped && sourceScalesJoints !== true
+          ? failureWithReport("joint scale tripwire tripped; skin conditioning must not proceed", result)
+          : response(result);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "sculpt_rig_reference",
+    {
+      description:
+        "Read the GLB's own skin joint order, inverse binds, animation channels and sampled landmark clips; ambiguous skins, landmarks and interpolation fail closed.",
+      inputSchema: z
+        .object({
+          glbPath: z.string().trim().min(1),
+          skinIndex: z.number().int().nonnegative().optional(),
+          landmarks: z.record(z.string(), z.union([z.string(), z.number().int().nonnegative()])).optional(),
+          sampleCount: z.number().int().min(2).max(1000).default(25),
+          figureHeight: z.number().positive().optional()
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async ({ glbPath, skinIndex, landmarks, sampleCount, figureHeight }) => {
+      try {
+        const rig = readRig(glbPath);
+        if (skinIndex !== undefined) {
+          const selected = rig.skins.find((skin) => skin.skinIndex === skinIndex);
+          if (!selected) return failureWithReport(`skinIndex ${skinIndex} is not present in the GLB`, rig.toJSON());
+          rig.primarySkin = selected;
+          rig.structuralFailure = null;
+        }
+        const base = rig.toJSON();
+        if (rig.structuralFailure) return failureWithReport(rig.structuralFailure, base);
+        if (!landmarks) return response(base);
+        const landmarkNodeIndices = resolveLandmarks(rig, landmarks);
+        const sampled = sampleClips(rig, landmarkNodeIndices, sampleCount, figureHeight);
+        return response({ ...base, sampledClips: sampled });
+      } catch (error) {
+        return failure(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "sculpt_rig_spec_gate",
+    {
+      description:
+        "Validate a structural Stage R rig payload: hierarchy, matrices, four-slot weights, joint indices and coverage.",
+      inputSchema: z.object({ payload: z.record(z.string(), z.unknown()) }).strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async ({ payload }) => {
+      const result = validateRigPayload(payload);
+      return result.passed ? response(result) : response(result, true);
+    }
+  );
+
+  server.registerTool(
+    "sculpt_skin_condition",
+    {
+      description:
+        "Blend four-slot skin weights across nearby multipart seams, report the deliberate crease trade, and fail if Gate R2 rejects the result.",
+      inputSchema: z
+        .object({
+          binding: z.unknown(),
+          figureHeight: z.number().positive(),
+          radius: z.number().positive().optional()
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async ({ binding, figureHeight, radius }) => {
+      try {
+        const result = blendWeights(SkinBinding.fromJSON(binding), figureHeight, radius);
+        const failures = validateBinding(result.binding);
+        const output = {
+          schemaVersion: 1,
+          kind: "blended-skin-binding",
+          binding: result.binding.toJSON(),
+          report: result.report.toJSON(),
+          gateR2: { passed: failures.length === 0, failures }
+        };
+        return failures.length === 0 ? response(output) : response(output, true);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "sculpt_mesh_parity",
+    {
+      description:
+        "Freeze packed position, normal, UV and index buffers before rigging or verify them afterward; skin attributes are legal additions.",
+      inputSchema: z
+        .object({
+          operation: z.enum(["freeze", "verify"]),
+          payload: z.unknown(),
+          manifest: z.unknown().optional()
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async ({ operation, payload, manifest }) => {
+      try {
+        if (operation === "freeze") return response(freezeMesh(payload).toJSON());
+        if (!manifest) return failure("verify requires a freeze manifest");
+        const report = verifyMesh(Manifest.fromJSON(manifest), payload);
+        return report.ok ? response(report.toJSON()) : response(report.toJSON(), true);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "sculpt_action_design",
+    {
+      description:
+        "Resolve topology-based limb chains, measure foot contact, accept a measured clip against walk/run targets, or synthesize an explicit gait payload.",
+      inputSchema: z
+        .object({
+          operation: z.enum(["resolve-chains", "foot-slide", "accept", "synthesize"]),
+          nodes: z.array(z.unknown()).optional(),
+          sideLabels: z.record(z.string(), z.string()).optional(),
+          payload: z.record(z.string(), z.unknown()).optional(),
+          clipName: z.string().trim().min(1).optional(),
+          intendedClass: z.enum(["walk", "run"]).optional(),
+          figureHeight: z.number().positive().optional(),
+          limit: z.number().nonnegative().optional()
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async (input) => {
+      try {
+        if (input.operation === "resolve-chains") {
+          if (!input.nodes) throw new Error("resolve-chains requires nodes");
+          const chains = resolveChains(input.nodes, input.sideLabels);
+          return response({ chains, medialLateral: checkMedialLateral(chains) });
+        }
+        if (input.operation === "synthesize") {
+          if (!input.intendedClass || !input.figureHeight) throw new Error("synthesize requires intendedClass and figureHeight");
+          const band = input.intendedClass === "walk" ? walkTargets(input.figureHeight) : runTargets(input.figureHeight);
+          const params = gaitParameters(band, input.figureHeight);
+          return response({ band: targetBandToJSON(band), parameters: params, clip: synthesiseGaitTracks(params) });
+        }
+        if (!input.payload) throw new Error(`${input.operation} requires payload`);
+        const sourcePayload = loadClipPayload(input.payload);
+        const payload = input.operation === "accept" && input.payload.authoredPayload !== undefined
+          ? loadClipPayload(input.payload.authoredPayload)
+          : sourcePayload;
+        const clip = input.clipName
+          ? payload.clips.find((candidate) => candidate.sourceName === input.clipName)
+          : payload.clips[0];
+        if (!clip) throw new Error(`clip ${JSON.stringify(input.clipName)} was not found in the sampled payload`);
+        if (input.operation === "foot-slide") {
+          if (!clip.stance) return failureWithReport("clip has no stance evidence", { status: "unevaluated" });
+          return response(footSlide(clip.landmarkPositions, clip.sampleTimes, clip.stance, payload.figureHeight, input.limit));
+        }
+        if (!input.intendedClass) throw new Error("accept requires intendedClass");
+        const band = input.intendedClass === "walk" ? walkTargets(payload.figureHeight) : runTargets(payload.figureHeight);
+        const measured = bandFeatures(clip, payload.figureHeight);
+        const features = measureClip(clip, payload.figureHeight);
+        const classification = classify(features);
+        const loop = decideLoop(features);
+        const declaredLoop = clip.loop === undefined ? loop.loop : clip.loop;
+        const acceptance = accepts(measured, band, input.intendedClass, {
+          classifierInput: features,
+          ...(clip.stance
+            ? { footSlideResult: footSlide(clip.landmarkPositions, clip.sampleTimes, clip.stance, payload.figureHeight) }
+            : {}),
+          ...(declaredLoop === null || declaredLoop === undefined ? {} : { declaredLoop }),
+          ...(payload.sourceScalesJoints === true ? { sourceScalesJoints: true } : {}),
+          ...(payload.sourceRanges === undefined ? {} : { sourceRanges: payload.sourceRanges }),
+          ...(payload.authoredRanges === undefined ? {} : { authoredRanges: payload.authoredRanges })
+        });
+        const sourceClip = input.clipName
+          ? sourcePayload.clips.find((candidate) => candidate.sourceName === input.clipName)
+          : sourcePayload.clips[0];
+        const result = {
+          clip: clip.sourceName,
+          ...(sourceClip && sourceClip !== clip
+            ? { sourceMeasured: measureClip(sourceClip, sourcePayload.figureHeight), authoredPayload: true }
+            : {}),
+          measured,
+          classification,
+          loop,
+          acceptance
+        };
+        return acceptance.accepted && acceptance.complete ? response(result) : failureWithReport("action design acceptance did not pass", result);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "sculpt_rig_gate",
+    {
+      description:
+        "Run every Stage R G1-G12 observation gate without short-circuiting; fail closed when any result is failed or unevaluated.",
+      inputSchema: z
+        .object({ payload: z.unknown() })
+        .strict(),
+      annotations: { readOnlyHint: true, idempotentHint: true }
+    },
+    async ({ payload }) => {
+      try {
+        const report = runGates(objectPayload(payload, "sculpt_rig_gate.payload"));
+        return report.ok ? response(report.toJSON()) : response(report.toJSON(), true);
+      } catch (error) {
+        return failure(error);
+      }
+    }
+  );
+
   return server;
 }
 
@@ -248,3 +524,54 @@ export { loadGrimoireCatalog, resourceSafetyReason } from "./grimoire.js";
 export { compareImages, inspectImage } from "./image.js";
 export { ciede2000, deltaERgb, srgbToLab } from "./math/color-metrics.js";
 export { gateObjectSculptSpec } from "./spec.js";
+export {
+  accepts,
+  bandFeatures,
+  checkMedialLateral,
+  footSlide,
+  gaitParameters,
+  resolveChains,
+  runTargets,
+  synthesiseGaitTracks,
+  targetBandToJSON,
+  walkTargets
+} from "./action-design.js";
+export {
+  BLEND_RADIUS,
+  DISCARD_REPORT_THRESHOLD,
+  MAX_INFLUENCES,
+  RESIDUAL_NOTE,
+  TRADE_NOTE,
+  WEIGHT_SUM_TOLERANCE,
+  SkinBinding,
+  UniformGrid,
+  blendWeights,
+  bruteForceQuery,
+  validateBinding,
+  weldCoincident
+} from "./skin-conditioning.js";
+export {
+  FROZEN_ATTRIBUTES,
+  FROZEN_BUFFERS,
+  Manifest,
+  ParityFailure,
+  ParityReport,
+  freeze as freezeMesh,
+  hashBuffer,
+  verify as verifyMesh
+} from "./mesh-parity.js";
+export {
+  DEFAULT_SWEEP_COVERAGE,
+  GATE_SPECS,
+  GateReport,
+  GateResult,
+  runGates
+} from "./rig-gates.js";
+export {
+  classify,
+  decideLoop,
+  loadClipPayload,
+  measureClip,
+  nameClip,
+  report as reportClipFeatures
+} from "./clip-features.js";

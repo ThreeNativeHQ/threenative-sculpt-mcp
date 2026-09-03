@@ -9,8 +9,8 @@ import {
 describe("technique-safe grimoire", () => {
   it("retains every upstream file while filtering unsafe served content", async () => {
     const catalog = await loadGrimoireCatalog();
-    expect(catalog.pages.length + catalog.rejected.length).toBe(35);
-    expect(catalog.pages.length).toBe(31);
+    expect(catalog.pages.length + catalog.rejected.length).toBe(37);
+    expect(catalog.pages.length).toBe(33);
     expect(catalog.rejected).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ topic: "character/structure_decomposition" }),
@@ -44,4 +44,3 @@ describe("technique-safe grimoire", () => {
       .toContain("material recipe");
   });
 });
-

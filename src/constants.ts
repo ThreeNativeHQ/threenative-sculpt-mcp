@@ -103,3 +103,6 @@ export const ANIMATION_GRIMOIRE_TOPICS = [
   "readiness/joint_attachment",
   "readiness/standard_character_pipeline"
 ] as const;
+
+export const BINDING_EPSILON = 2 ** -23;
+export const BIND_RESTORE_TOLERANCE = 1e-12;

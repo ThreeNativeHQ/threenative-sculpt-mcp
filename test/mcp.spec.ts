@@ -1,19 +1,28 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSculptServer } from "../src/index.js";
+import { DEFAULT_SIBLING_CHECKOUT, resolveSiblingCheckout } from "../scripts/verify-release.mts";
 
 const expectedTools = [
   "sculpt_compare",
   "sculpt_grimoire",
   "sculpt_pass_gate",
   "sculpt_plan",
-  "sculpt_spec_gate"
-];
+  "sculpt_spec_gate",
+  "sculpt_clip_measure",
+  "sculpt_rig_reference",
+  "sculpt_rig_spec_gate",
+  "sculpt_skin_condition",
+  "sculpt_mesh_parity",
+  "sculpt_action_design",
+  "sculpt_rig_gate"
+].sort();
 
 describe("live MCP surface", () => {
   const clients: Client[] = [];
@@ -44,7 +53,7 @@ describe("live MCP surface", () => {
     return file;
   }
 
-  it("lists exactly the five contracted tools", async () => {
+  it("lists exactly the twelve contracted tools", async () => {
     const client = await connectedClient();
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual(expectedTools);
@@ -142,6 +151,18 @@ describe("live MCP surface", () => {
     expect(payload.grimoireResources).toContain(
       "sculpt://grimoire/readiness/animation_contract"
     );
+  });
+
+  it("resolves the absolute sibling checkout and never uses the lane-relative candidate", () => {
+    const engineLane = "/home/joao/projects/threenative/threenative-engine/.worktrees/prd-346-img2threejs-1-5-2-animation-proof";
+    const resolution = resolveSiblingCheckout(engineLane, DEFAULT_SIBLING_CHECKOUT);
+    expect(resolution.resolvedPath).toBe(DEFAULT_SIBLING_CHECKOUT);
+    expect(existsSync(path.join(resolution.resolvedPath, "package.json"))).toBe(true);
+    expect(resolution.laneRelativeCandidate).toBe(
+      "/home/joao/projects/threenative/threenative-engine/.worktrees/threenative-sculpt-mcp"
+    );
+    expect(existsSync(resolution.laneRelativeCandidate)).toBe(false);
+    expect(resolution.laneRelativeLookupUsed).toBe(false);
   });
 
   it("makes the live pass gate retry when semantic review is omitted", async () => {

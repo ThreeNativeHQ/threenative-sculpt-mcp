@@ -17,6 +17,9 @@ Adapted from img2threejs:
   forge/stage4_review/append_review.py
   docs/standard-prompts/vfx.md
 
+The served `grimoire/readiness/vfx.md` is a technique-safe adaptation of that measured-event
+guidance. It names ThreeNative runtime mechanisms without supplying game-owned appearance code.
+
 Ported to TypeScript from img2threejs v1.5.2 Stage R:
   forge/stage5_rig/clip_features.py
   forge/stage5_rig/action_design.py
