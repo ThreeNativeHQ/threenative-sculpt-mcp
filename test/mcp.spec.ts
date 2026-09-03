@@ -109,6 +109,41 @@ describe("live MCP surface", () => {
     });
   });
 
+  it("routes an animated-character plan through the complete Stage R order", async () => {
+    const client = await connectedClient();
+    const reference = await referenceImage();
+    const result = await client.callTool({
+      name: "sculpt_plan",
+      arguments: {
+        referencePath: reference,
+        intent: "animated character",
+        profile: "animated-character"
+      }
+    });
+    expect(result.isError).not.toBe(true);
+    const text = result.content.find((item) => item.type === "text")?.text ?? "{}";
+    const payload = JSON.parse(text) as {
+      profile: string;
+      stageR: Array<{ id: string }>;
+      grimoireResources: string[];
+    };
+    expect(payload.profile).toBe("animated-character");
+    expect(payload.stageR.map((step) => step.id)).toEqual([
+      "rig-contract-read",
+      "glb-rig-reference",
+      "mesh-repair",
+      "mesh-freeze",
+      "rig-payload-validate",
+      "rig-bind",
+      "mesh-parity-verify",
+      "clip-measure",
+      "rig-gates"
+    ]);
+    expect(payload.grimoireResources).toContain(
+      "sculpt://grimoire/readiness/animation_contract"
+    );
+  });
+
   it("makes the live pass gate retry when semantic review is omitted", async () => {
     const client = await connectedClient();
     const reference = await referenceImage();

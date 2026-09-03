@@ -1,6 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
-import { PASS_ORDER } from "./constants.js";
+import {
+  ANIMATION_GRIMOIRE_TOPICS,
+  PASS_ORDER,
+  SCULPT_PROFILES,
+  STAGE_R_STEPS
+} from "./constants.js";
 import { gatePass } from "./gate.js";
 import { findGrimoirePage, loadGrimoireCatalog } from "./grimoire.js";
 import { compareImages, inspectImage } from "./image.js";
@@ -61,7 +66,7 @@ const compareResultSchema = z.object({
   notes: z.array(z.string())
 });
 
-function relevantTopics(intent: string, validTopics: Set<string>): string[] {
+function relevantTopics(intent: string, profile: (typeof SCULPT_PROFILES)[number], validTopics: Set<string>): string[] {
   const topics = [
     "intake/image_analysis",
     "intake/detail_inventory",
@@ -72,7 +77,7 @@ function relevantTopics(intent: string, validTopics: Set<string>): string[] {
     "review/self_correction",
     "review/gates_reference"
   ];
-  if (/character|creature|person|face|humanoid|animal/i.test(intent)) {
+  if (profile !== "generic" || /character|creature|person|face|humanoid|animal/i.test(intent)) {
     topics.push(
       "character/reconstruction",
       "character/likeness_maximization",
@@ -81,6 +86,9 @@ function relevantTopics(intent: string, validTopics: Set<string>): string[] {
       "readiness/action_rigging"
     );
   }
+  if (profile === "animated-character" || /animation|animated|clip|rig|strike|vfx|effect/i.test(intent)) {
+    topics.push(...ANIMATION_GRIMOIRE_TOPICS);
+  }
   return [...new Set(topics)].filter((topic) => validTopics.has(topic));
 }
 
@@ -88,10 +96,10 @@ export async function createSculptServer(): Promise<McpServer> {
   const catalog = await loadGrimoireCatalog();
   const validTopics = new Set(catalog.pages.map((page) => page.topic));
   const server = new McpServer(
-    { name: "threenative-sculpt-mcp", version: "0.1.1" },
+    { name: "threenative-sculpt-mcp", version: "0.2.0" },
     {
       instructions:
-        "Use sculpt_plan, read its technique-safe grimoire resources, pass sculpt_spec_gate before writing code, then compare each playtest capture and call sculpt_pass_gate. Pixel metrics never replace semantic image review."
+        "Use sculpt_plan, read its technique-safe grimoire resources, pass sculpt_spec_gate before writing code, then compare each playtest capture and call sculpt_pass_gate. Animated characters must complete the ordered Stage R calls and all rig gates. Pixel metrics never replace semantic image review."
     }
   );
 
@@ -117,19 +125,22 @@ export async function createSculptServer(): Promise<McpServer> {
         "Validate a reference image and return the locked eight-pass sculpt order plus relevant technique-safe grimoire resources.",
       inputSchema: z.object({
         referencePath: z.string().trim().min(1),
-        intent: z.string().trim().min(1).max(500)
+        intent: z.string().trim().min(1).max(500),
+        profile: z.enum(SCULPT_PROFILES).default("generic")
       }),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
-    async ({ referencePath, intent }) => {
+    async ({ referencePath, intent, profile }) => {
       try {
         const image = await inspectImage(referencePath, "reference");
-        const topics = relevantTopics(intent, validTopics);
+        const topics = relevantTopics(intent, profile, validTopics);
         if (topics.length === 0) throw new Error("no technique-safe grimoire topics are available");
         return response({
           reference: { path: referencePath, width: image.width, height: image.height },
           intent,
+          profile,
           passes: PASS_ORDER,
+          ...(profile === "animated-character" ? { stageR: STAGE_R_STEPS } : {}),
           grimoireResources: topics.map((topic) => `sculpt://grimoire/${topic}`),
           contract: "write and gate ObjectSculptSpec before authoring src/render source"
         });

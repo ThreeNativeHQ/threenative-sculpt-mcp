@@ -52,3 +52,54 @@ export const COMPLEXITY_THRESHOLDS = {
 
 export type ComplexityTier = keyof typeof COMPLEXITY_THRESHOLDS;
 
+export const SCULPT_PROFILES = ["generic", "character", "animated-character"] as const;
+
+export type SculptProfile = (typeof SCULPT_PROFILES)[number];
+
+export const STAGE_R_STEPS = [
+  {
+    id: "rig-contract-read",
+    description:
+      "Read the animation contract and the complete character rigging and animation contract before authoring."
+  },
+  {
+    id: "glb-rig-reference",
+    description:
+      "Read the skeleton, skin joint order, inverse binds, landmarks and clips from the GLB."
+  },
+  {
+    id: "mesh-repair",
+    description: "Inspect and repair mesh breakage before the geometry becomes evidence."
+  },
+  {
+    id: "mesh-freeze",
+    description: "Freeze packed mesh buffers before any rig work."
+  },
+  {
+    id: "rig-payload-validate",
+    description: "Validate the structural rig payload without substituting pose or likeness gates."
+  },
+  {
+    id: "rig-bind",
+    description: "Bind additively: add the skeleton and skin attributes while preserving frozen buffers."
+  },
+  {
+    id: "mesh-parity-verify",
+    description: "Verify post-bind packed buffers against the frozen manifest."
+  },
+  {
+    id: "clip-measure",
+    description: "Measure, classify, name and loop-decide every sampled clip from observed transforms."
+  },
+  {
+    id: "rig-gates",
+    description: "Run every Stage R gate; an unevaluated gate is not a pass."
+  }
+] as const;
+
+export const ANIMATION_GRIMOIRE_TOPICS = [
+  "readiness/animation_contract",
+  "readiness/action_rigging",
+  "readiness/joint_attachment",
+  "readiness/standard_character_pipeline"
+] as const;

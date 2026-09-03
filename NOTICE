@@ -3,7 +3,7 @@ Copyright 2026 ThreeNative contributors
 
 This product includes material derived from img2threejs
 (https://github.com/img2threejs/img2threejs), upstream revision
-9fbd0ca5bbcc3b13bebe712745d6784d33db0b85, Copyright 2026 hoainho,
+d6815db757c1eb435ae55f91fb375a7a98ddf28b, Copyright 2026 hoainho,
 licensed under the Apache License, Version 2.0.
 
 Retained verbatim from img2threejs:
@@ -15,6 +15,16 @@ Adapted from img2threejs:
   forge/stage2_spec/validate_sculpt_spec.py
   forge/stage3_build/orchestrate_passes.py
   forge/stage4_review/append_review.py
+  docs/standard-prompts/vfx.md
+
+Ported to TypeScript from img2threejs v1.5.2 Stage R:
+  forge/stage5_rig/clip_features.py
+  forge/stage5_rig/action_design.py
+  forge/stage5_rig/glb_rig_reference.py
+  forge/stage5_rig/validate_rig_payload.py
+  forge/stage5_rig/skin_conditioning.py
+  forge/stage5_rig/mesh_parity.py
+  forge/stage5_rig/rig_gates.py
 
 Ported to TypeScript from img2threejs:
   forge/_shared/color_metrics.py
