@@ -28,7 +28,7 @@ import {
 } from "./clip-features.js";
 import { readRig, resolveLandmarks, sampleClips } from "./glb-rig-reference.js";
 import { validateRigPayload } from "./rig-payload.js";
-import { SkinBinding, blendWeights, validateBinding } from "./skin-conditioning.js";
+import { SkinBinding, blendWeights, validateBinding, validateDiscardReport } from "./skin-conditioning.js";
 import { freeze as freezeMesh, Manifest, verify as verifyMesh } from "./mesh-parity.js";
 import { runGates } from "./rig-gates.js";
 import { gatePass } from "./gate.js";
@@ -137,7 +137,7 @@ export async function createSculptServer(): Promise<McpServer> {
   const catalog = await loadGrimoireCatalog();
   const validTopics = new Set(catalog.pages.map((page) => page.topic));
   const server = new McpServer(
-    { name: "threenative-sculpt-mcp", version: "0.2.0" },
+    { name: "threenative-sculpt-mcp", version: "0.2.1" },
     {
       instructions:
         "Use sculpt_plan, read its technique-safe grimoire resources, pass sculpt_spec_gate before writing code, then compare each playtest capture and call sculpt_pass_gate. Animated characters must complete the ordered Stage R calls and all rig gates. Pixel metrics never replace semantic image review."
@@ -372,7 +372,7 @@ export async function createSculptServer(): Promise<McpServer> {
     async ({ binding, figureHeight, radius }) => {
       try {
         const result = blendWeights(SkinBinding.fromJSON(binding), figureHeight, radius);
-        const failures = validateBinding(result.binding);
+        const failures = [...validateBinding(result.binding), ...validateDiscardReport(result.report)];
         const output = {
           schemaVersion: 1,
           kind: "blended-skin-binding",
@@ -547,6 +547,7 @@ export {
   UniformGrid,
   blendWeights,
   bruteForceQuery,
+  validateDiscardReport,
   validateBinding,
   weldCoincident
 } from "./skin-conditioning.js";

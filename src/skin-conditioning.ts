@@ -5,7 +5,7 @@ export const WELD_TOLERANCE = 1e-4;
 export const DISCARD_REPORT_THRESHOLD = 1e-3;
 
 export const TRADE_NOTE =
-  "Proximity blending closes holes and makes creases ~16% worse (measured over 176 frames: holes 974px/30 blobs -> 287px/15 blobs, creases 31,316px -> 36,470px). A hole shows the background, a crease shows skin; the trade was accepted deliberately. Do not disable the blend to bring the crease count back down.";
+  "Proximity blending closes holes while making creases more visible. A hole shows the background, a crease shows skin; the trade is reported from a deterministic multipart-fixture measurement rather than a baked claim.";
 export const RESIDUAL_NOTE =
   "Creases are not eliminated by this method. Removing them entirely needs one continuous mesh with a unified weight field, which changes the part structure and breaks per-part UI.";
 
@@ -174,6 +174,15 @@ export class BlendReport implements BlendReportValue {
 export interface BlendResult {
   binding: SkinBinding;
   report: BlendReport;
+}
+
+export function validateDiscardReport(report: Pick<BlendReportValue, "maxDiscardedFraction" | "discardThreshold">): string[] {
+  if (!finite(report.maxDiscardedFraction) || !finite(report.discardThreshold)) {
+    return ["skin conditioning did not report a finite top-four discard fraction and threshold"];
+  }
+  return report.maxDiscardedFraction > report.discardThreshold
+    ? [`top-four skin reduction discarded ${report.maxDiscardedFraction} of influence mass, exceeding the allowed ${report.discardThreshold}`]
+    : [];
 }
 
 export interface Neighbor {

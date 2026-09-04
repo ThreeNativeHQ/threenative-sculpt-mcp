@@ -20,6 +20,8 @@ import { SkinBinding, WEIGHT_SUM_TOLERANCE, validateBinding } from "./skin-condi
 export { BIND_RESTORE_TOLERANCE, BINDING_EPSILON } from "./constants.js";
 export { FOOT_SLIDE_LIMIT, MEDIAL_AXIS_TOLERANCE } from "./action-design.js";
 export const MINIMUM_GATE_R1_SAMPLES = 5;
+export const BINDING_OBSERVATION_SOURCE = "ThreeNative.clipTrackBindings";
+const BINDING_DELTA_MATCH_TOLERANCE = 1e-12;
 export const MINIMUM_G2_VERTICES = 64;
 export const MINIMUM_SWEEP_TIMES = 4;
 export const MINIMUM_SWEEP_SIDES = 2;
@@ -248,9 +250,22 @@ function normalizedSampledClips(raw: unknown): Map<string, Json> | null {
 }
 
 export function gateG1(payload: Json): GateResult {
-  const threshold = { maxSampledBindingDelta: BINDING_EPSILON, minimumSamplesPerClip: MINIMUM_GATE_R1_SAMPLES, clipCoverage: "every clip in the roster" };
+  const threshold = {
+    maxSampledBindingDelta: BINDING_EPSILON,
+    minimumSamplesPerClip: MINIMUM_GATE_R1_SAMPLES,
+    clipCoverage: "every clip in the roster",
+    observationSource: BINDING_OBSERVATION_SOURCE,
+    bindingDelta: "unbound track fraction measured by clipTrackBindings"
+  };
   const block = payload.bindingSamples;
   if (!isRecord(block)) return unevaluated("G1", "payload has no bindingSamples block; the host harness did not run", threshold);
+  if (block.source !== BINDING_OBSERVATION_SOURCE) return unevaluated("G1", `bindingSamples.source must be ${BINDING_OBSERVATION_SOURCE}`, threshold);
+  const sampleTimes = Array.isArray(block.sampleTimes) && block.sampleTimes.every(finite)
+    ? block.sampleTimes
+    : null;
+  if (!sampleTimes || sampleTimes.length < MINIMUM_GATE_R1_SAMPLES) {
+    return unevaluated("G1", `bindingSamples.sampleTimes must contain at least ${MINIMUM_GATE_R1_SAMPLES} finite mixer sample times`, threshold);
+  }
   const delta = block.maxSampledBindingDelta;
   if (!finite(delta)) return unevaluated("G1", "bindingSamples.maxSampledBindingDelta is missing or not finite", threshold);
   const roster = clipRoster(payload);
@@ -260,20 +275,79 @@ export function gateG1(payload: Json): GateResult {
   const missing = roster.filter((name) => !sampled.has(name));
   const thin: Record<string, number> = {};
   const unreadable: string[] = [];
+  const malformed: string[] = [];
+  const unbound: string[] = [];
+  const clipObservations: Json = {};
+  let observedMax = 0;
   for (const name of roster) {
-    const count = sampled.get(name)?.sampleCount;
-    if (nonNegativeInt(count) === null) unreadable.push(name);
-    else if ((count as number) < MINIMUM_GATE_R1_SAMPLES) thin[name] = count as number;
+    const entry = sampled.get(name);
+    const count = entry?.sampleCount;
+    const samples = entry?.samples;
+    const readableCount = nonNegativeInt(count);
+    if (readableCount === null || !Array.isArray(samples)) {
+      unreadable.push(name);
+      continue;
+    }
+    if (samples.length !== readableCount) malformed.push(`${name} declares sampleCount ${readableCount} but carries ${samples.length} samples`);
+    if (readableCount < MINIMUM_GATE_R1_SAMPLES) thin[name] = readableCount;
+    let clipMax = 0;
+    let clipTracks: number | null = null;
+    let clipBound: number | null = null;
+    let clipUnbound = 0;
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index];
+      if (!isRecord(sample)) {
+        malformed.push(`${name} sample ${index} is not an object`);
+        continue;
+      }
+      const sampleTime = sample.time;
+      const mixerTime = sample.mixerTime;
+      const tracks = nonNegativeInt(sample.tracks);
+      const bound = nonNegativeInt(sample.bound);
+      const sampleDelta = sample.bindingDelta;
+      const unboundTracks = Array.isArray(sample.unbound) ? sample.unbound : null;
+      const missingTrackInfo = unboundTracks === null;
+      if (!finite(sampleTime) || !finite(mixerTime) || tracks === null || bound === null || !finite(sampleDelta) || missingTrackInfo) {
+        malformed.push(`${name} sample ${index} has unreadable mixer or binding measurements`);
+        continue;
+      }
+      if (Math.abs(sampleTime - sampleTimes[index % sampleTimes.length]!) > BINDING_DELTA_MATCH_TOLERANCE) {
+        malformed.push(`${name} sample ${index} does not match the declared normalized sample time`);
+      }
+      if (mixerTime < 0 || tracks < 1 || bound > tracks || bound + unboundTracks!.length !== tracks) {
+        malformed.push(`${name} sample ${index} has inconsistent tracks=${tracks}, bound=${bound}, unbound=${unboundTracks!.length}`);
+      }
+      for (const [unboundIndex, track] of unboundTracks!.entries()) {
+        if (!isRecord(track) || typeof track.track !== "string" || track.bound !== false || !(track.node === null || typeof track.node === "string") || !(track.reason === null || typeof track.reason === "string")) {
+          malformed.push(`${name} sample ${index} has unreadable unbound track ${unboundIndex}`);
+        }
+      }
+      const expectedDelta = tracks > 0 ? unboundTracks!.length / tracks : Number.NaN;
+      if (!finite(expectedDelta) || Math.abs(sampleDelta - expectedDelta) > BINDING_DELTA_MATCH_TOLERANCE) {
+        malformed.push(`${name} sample ${index} bindingDelta is not the measured unbound-track fraction`);
+      }
+      if (unboundTracks!.length > 0) unbound.push(name);
+      clipMax = Math.max(clipMax, sampleDelta);
+      observedMax = Math.max(observedMax, sampleDelta);
+      clipTracks = clipTracks === null ? tracks : Math.max(clipTracks, tracks);
+      clipBound = clipBound === null ? bound : Math.min(clipBound, bound);
+      clipUnbound = Math.max(clipUnbound, unboundTracks!.length);
+    }
+    clipObservations[name] = { sampleCount: readableCount, tracks: clipTracks, minimumBound: clipBound, maximumUnbound: clipUnbound, maxBindingDelta: clipMax };
   }
   const extra = [...sampled.keys()].filter((name) => !roster.includes(name));
   const coverage = { clipsInRoster: roster.length, clipsSampled: roster.filter((name) => sampled.has(name)).length, minimumSamplesPerClip: MINIMUM_GATE_R1_SAMPLES, clipsMissing: missing, clipsUnderSampled: thin, clipsWithUnreadableSampleCount: unreadable, clipsNotInRoster: extra };
-  const measured = { maxSampledBindingDelta: delta, coverage };
+  const measured = { maxSampledBindingDelta: delta, observedMaxSampledBindingDelta: observedMax, sampleTimes, coverage, clipObservations };
+  if (malformed.length) return unevaluated("G1", `bindingSamples contains malformed measurements: ${malformed.join("; ")}`, threshold, measured);
+  if (Math.abs(delta - observedMax) > BINDING_DELTA_MATCH_TOLERANCE) return unevaluated("G1", `maxSampledBindingDelta ${delta} does not match the observed maximum ${observedMax}`, threshold, measured);
+  if (missing.length || unreadable.length) return unevaluated("G1", `binding observation coverage is incomplete: ${[...(missing.length ? [`missing ${missing.join(", ")}`] : []), ...(unreadable.length ? [`unreadable ${unreadable.join(", ")}`] : [])].join("; ")}`, threshold, measured);
   const problems: string[] = [];
   if (!(delta <= BINDING_EPSILON)) problems.push(`maxSampledBindingDelta = ${delta} exceeds float32 epsilon ${BINDING_EPSILON}`);
   if (missing.length) problems.push(`the harness skipped ${missing.length} of ${roster.length} clips (${missing.join(", ")})`);
   if (Object.keys(thin).length) problems.push(`${Object.keys(thin).length} clip(s) sampled fewer than ${MINIMUM_GATE_R1_SAMPLES} times`);
   if (unreadable.length) problems.push(`${unreadable.length} clip(s) report no readable sampleCount (${unreadable.join(", ")})`);
-  return verdict("G1", problems.length === 0, threshold, measured, problems.length ? problems.join("; ") : `maxSampledBindingDelta = ${delta} <= ${BINDING_EPSILON} over ${roster.length} clip(s), each sampled at least ${MINIMUM_GATE_R1_SAMPLES} times`, extra.length ? [`harness sampled clips absent from roster: ${extra.join(", ")}`] : []);
+  if (unbound.length) problems.push(`${new Set(unbound).size} clip(s) contain unbound animation tracks (${[...new Set(unbound)].join(", ")})`);
+  return verdict("G1", problems.length === 0, threshold, measured, problems.length ? problems.join("; ") : `maxSampledBindingDelta = ${delta} <= ${BINDING_EPSILON} from ${BINDING_OBSERVATION_SOURCE} over ${roster.length} clip(s), each sampled at least ${MINIMUM_GATE_R1_SAMPLES} times`, extra.length ? [`harness sampled clips absent from roster: ${extra.join(", ")}`] : []);
 }
 
 function frameCounts(value: unknown): { frames: number | null; counts: number[] | null } {

@@ -45,7 +45,24 @@ function basePayload() {
     figureHeight: 1,
     clips: [sampleClip()],
     clipNames: ["walk"],
-    bindingSamples: { maxSampledBindingDelta: 0, clips: { walk: { sampleCount: 5 } } },
+    bindingSamples: {
+      source: "ThreeNative.clipTrackBindings",
+      sampleTimes: [0, 0.25, 0.5, 0.75, 1],
+      maxSampledBindingDelta: 0,
+      clips: {
+        walk: {
+          sampleCount: 5,
+          samples: [0, 0.25, 0.5, 0.75, 1].map((time) => ({
+            time,
+            mixerTime: time,
+            tracks: 2,
+            bound: 2,
+            unbound: [],
+            bindingDelta: 0
+          }))
+        }
+      }
+    },
     deformation: { nonFiniteCount: 0, allFinite: true, meshes: { body: { frames: 1, verticesPerFrame: 64 } } },
     bindRestore: { maxBindRestoreDelta: 0 },
     binding: { positions: [[0, 0, 0]], partIds: ["body"], skinIndices: [0, 0, 0, 0], skinWeights: [1, 0, 0, 0], jointCount: 1 },
@@ -109,5 +126,31 @@ describe("Stage R G1-G12", () => {
       expect(report.results).toHaveLength(12);
       console.log(`negative-control ${id}: ${report.byId(id).status} — ${report.byId(id).reason}`);
     }
+  });
+
+  it("fails closed when a real track observation is absent or unbound", () => {
+    const missingSample = structuredClone(basePayload()) as Record<string, unknown>;
+    const missingBinding = missingSample.bindingSamples as Record<string, unknown>;
+    delete (missingBinding.clips as Record<string, unknown>).walk;
+    expect(runGates(missingSample).byId("G1").status).toBe("unevaluated");
+
+    const unbound = structuredClone(basePayload()) as Record<string, unknown>;
+    const entry = ((unbound.bindingSamples as Record<string, unknown>).clips as Record<string, unknown>).walk as Record<string, unknown>;
+    const samples = entry.samples as Array<Record<string, unknown>>;
+    samples[2]!.bound = 1;
+    samples[2]!.unbound = [{ track: "Missing.quaternion", node: null, bound: false, reason: "missing node" }];
+    samples[2]!.tracks = 2;
+    samples[2]!.bindingDelta = 0.5;
+    (unbound.bindingSamples as Record<string, unknown>).maxSampledBindingDelta = 0.5;
+    const report = runGates(unbound);
+    expect(report.byId("G1").status).toBe("fail");
+    expect(report.byId("G1").reason).toContain("unbound");
+  });
+
+  it("fails closed when the binding delta is reconstructed instead of measured", () => {
+    const payload = structuredClone(basePayload()) as Record<string, unknown>;
+    const samples = (((payload.bindingSamples as Record<string, unknown>).clips as Record<string, unknown>).walk as Record<string, unknown>).samples as Array<Record<string, unknown>>;
+    samples[0]!.bindingDelta = 0.25;
+    expect(runGates(payload).byId("G1").status).toBe("unevaluated");
   });
 });

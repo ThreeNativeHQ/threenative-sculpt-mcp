@@ -98,6 +98,19 @@ describe("skin conditioning", () => {
     expect(source.toJSON()).toEqual(original);
   });
 
+  it("marks a top-four reduction above the report threshold as unsafe", () => {
+    const source = new SkinBinding({
+      positions: [[0, 0, 0], [0.001, 0, 0], [0.0015, 0, 0], [0.002, 0, 0], [0.0025, 0, 0]],
+      partIds: ["a", "b", "b", "b", "b"],
+      skinIndices: [0, 1, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0],
+      skinWeights: [0.7, 0.3, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+      jointCount: 6
+    });
+    const result = blendWeights(source, 1);
+    expect(result.report.maxDiscardedFraction).toBeGreaterThan(result.report.discardThreshold);
+    expect(result.report.lossyReductions).toBeGreaterThan(0);
+  });
+
   it("is independent of vertex order and leaves interior vertices bit-identical", async () => {
     const source = await readFixtureBinding();
     const order = [...Array(source.vertexCount).keys()].reverse();

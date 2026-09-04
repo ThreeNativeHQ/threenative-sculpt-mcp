@@ -1,8 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { exportRazGlb } from "./export-raz-glb.js";
 import {
@@ -16,6 +17,8 @@ import { measureClip, type Vec3 } from "../src/clip-features.js";
 import { readRig, resolveLandmarks, sampleClips } from "../src/glb-rig-reference.js";
 import { Manifest, verify as verifyMesh } from "../src/mesh-parity.js";
 import { runGates } from "../src/rig-gates.js";
+import { SkinBinding } from "../src/skin-conditioning.js";
+import { formatSeamTrade, measureMultipartSeam } from "../src/seam-measurement.js";
 
 export const DEFAULT_SIBLING_CHECKOUT = "/home/joao/projects/threenative/threenative-sculpt-mcp";
 export const DEFAULT_ENGINE_LANE = "/home/joao/projects/threenative/threenative-engine/.worktrees/prd-346-img2threejs-1-5-2-animation-proof";
@@ -56,6 +59,59 @@ function jsonFile(filePath: string): Json {
 function writeJson(filePath: string, value: unknown): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function readPlaytestReport(filePath: string): Json {
+  const text = readFileSync(filePath, "utf8");
+  const starts = [...text.matchAll(/^\{/gm)].map((match) => match.index).filter((index): index is number => index !== undefined).reverse();
+  for (const jsonStart of starts) {
+    try {
+      const candidate = record(JSON.parse(text.slice(jsonStart)), filePath);
+      if ("scenario" in candidate && "observations" in candidate) return candidate;
+    } catch {
+      continue;
+    }
+  }
+  throw new Error(`browser playtest report has no complete JSON document: ${filePath}`);
+}
+
+function browserBindingEvidence(filePath: string): { bindingSamples: Json; bindingNegativeControl: Json } {
+  const report = readPlaytestReport(filePath);
+  const observations = record(report.observations, `${filePath}.observations`);
+  const resources = record(observations.resources, `${filePath}.observations.resources`);
+  const stateResource = record(resources.state ?? resources.GameState, `${filePath}.observations.resources.state`);
+  const state = record(stateResource.after ?? stateResource, `${filePath}.observations.resources.state.after`);
+  return {
+    bindingSamples: record(state.bindingSamples, `${filePath}.state.bindingSamples`),
+    bindingNegativeControl: record(state.bindingNegativeControl, `${filePath}.state.bindingNegativeControl`)
+  };
+}
+
+async function copiedServerWithoutTool(serverPath: string, siblingWorkspace: string, outDirectory: string, toolName: string): Promise<Json> {
+  mkdirSync(path.join(outDirectory, "negative-controls"), { recursive: true });
+  const controlDirectory = await mkdtemp(path.join(outDirectory, "negative-controls/removed-registration-"));
+  const copiedDist = path.join(controlDirectory, "dist");
+  cpSync(path.dirname(serverPath), copiedDist, { recursive: true });
+  cpSync(path.join(siblingWorkspace, "grimoire"), path.join(controlDirectory, "grimoire"), { recursive: true });
+  symlinkSync(path.join(siblingWorkspace, "node_modules"), path.join(controlDirectory, "node_modules"), "dir");
+  const copiedIndex = path.join(copiedDist, "index.js");
+  const registration = `server.registerTool("${toolName}", {`;
+  const source = readFileSync(copiedIndex, "utf8");
+  if (source.split(registration).length !== 2) throw new Error(`copied built server did not contain exactly one ${toolName} registration`);
+  writeFileSync(copiedIndex, source.replace(registration, `if (false) ${registration}`));
+  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(copiedDist, "server.js")], cwd: controlDirectory, stderr: "pipe", maxBufferSize: 256 * 1024 * 1024 });
+  const client = new Client({ name: "prd-346-remove-registration-control", version: "0.2.1" });
+  try {
+    await client.connect(transport);
+    const listed = await client.listTools();
+    const actual = listed.tools.map((tool) => tool.name).sort();
+    if (actual.includes(toolName)) throw new Error(`copied server still registered ${toolName}`);
+    const result = { controlDirectory, toolName, observed: "red", response: { listedTools: actual, missingTool: !actual.includes(toolName) } };
+    writeJson(path.join(outDirectory, "negative-controls", "remove-registration.json"), result);
+    return result;
+  } finally {
+    await client.close().catch(() => undefined);
+  }
 }
 
 function compactManifest(value: unknown): Json {
@@ -238,6 +294,8 @@ async function verifyRelease(): Promise<Json> {
   const showcase = absolute(argument("--showcase", "/tmp/img2threejs-showcase-prd346.Iyq1Vr")!);
   const outDirectory = absolute(argument("--out-dir", path.join(engineLane, "artifacts/prd-346"))!);
   mkdirSync(outDirectory, { recursive: true });
+  const browserReportPath = absolute(argument("--browser-report", path.join(engineLane, "artifacts/prd-346/browser/playtest-report.log"))!);
+  if (!existsSync(browserReportPath)) throw new Error(`browser binding evidence is missing: ${browserReportPath}; run the Raz playtest first`);
   const glbPath = absolute(argument("--glb", path.join(outDirectory, "raz.glb"))!, outDirectory);
   const meshPath = absolute(argument("--mesh", glbPath.replace(/\.glb$/i, ".mesh.json")), outDirectory);
   const exportReportPath = glbPath.replace(/\.glb$/i, ".export.json");
@@ -274,7 +332,8 @@ async function verifyRelease(): Promise<Json> {
   const transport = new StdioClientTransport({ command: process.execPath, args: [serverPath], cwd: siblingWorkspace, stderr: "pipe", maxBufferSize: 256 * 1024 * 1024 });
   const stderr: Buffer[] = [];
   transport.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
-  const client = new Client({ name: "prd-346-release-verifier", version: "0.2.0" });
+  const packageVersion = asString(workspacePackage.version, "sibling package.version");
+  const client = new Client({ name: "prd-346-release-verifier", version: packageVersion });
   const call = async (name: string, args: Json): Promise<Json> => {
     const response = await client.callTool({ name, arguments: args });
     const observed = response.isError === true ? "red" : "green";
@@ -382,15 +441,24 @@ async function verifyRelease(): Promise<Json> {
     const deformation = record(blenderReport.deformation, "blenderReport.deformation");
     const sweep = record(blenderReport.sweep, "blenderReport.sweep");
     const blenderBindRestore = record(blenderReport.bindRestore, "blenderReport.bindRestore");
+    const browserEvidence = browserBindingEvidence(browserReportPath);
+    const seamMeasurement = measureMultipartSeam(
+      SkinBinding.fromJSON(fixtureBinding),
+      SkinBinding.fromJSON(skin.binding)
+    );
+    const seamEvidence: Json = {
+      ...seamMeasurement,
+      sourceFixture: path.join(siblingWorkspace, "test/fixtures/multipart-seam.json"),
+      trade: formatSeamTrade(seamMeasurement)
+    };
+    writeJson(path.join(outDirectory, "seam-measurement.json"), seamEvidence);
+    const skinReport = { ...record(skin.report, "sculpt_skin_condition.report"), trade: formatSeamTrade(seamMeasurement) };
     const gatePayload: Json = {
       figureHeight,
       clipNames: rawClips.map((clip) => asString(clip.sourceName, "clip sourceName")),
       clips: rawClips.map((clip) => ({ ...clip, stance: sourceStance(clip, figureHeight) })),
       sourceScalesJoints: true,
-      bindingSamples: {
-        maxSampledBindingDelta: 0,
-        clips: Object.fromEntries(rawClips.map((clip) => [asString(clip.sourceName, "clip sourceName"), { sampleCount: 5 }]))
-      },
+      bindingSamples: browserEvidence.bindingSamples,
       deformation,
       bindRestore: blenderBindRestore,
       binding: {
@@ -402,13 +470,16 @@ async function verifyRelease(): Promise<Json> {
       },
       meshVisibility: { visibleMeshCount: blenderCounts.mesh, visibleSkinnedMeshCount: blenderCounts.mesh, unboundMeshes: [] },
       chainAnchors: { joints: topology.nodes, sideLabels: topology.sideLabels, symmetryTolerance: 0.01, source: topology.note },
-      skinIntegritySweep: sweep,
+      skinIntegritySweep: { ...sweep, multipartFixture: seamEvidence },
       meshParity: { manifest: freezeSummary, after: parityPayload },
       rigReference: { source: "glb", glb: rig },
       evidence: {
         glbSha256: sha256(glbPath),
         blenderGlbSha256: sha256(asString(blenderReport.glb, "blenderReport.glb")),
-        topologyNormalization: topology.note
+        topologyNormalization: topology.note,
+        browserReportPath,
+        bindingObservationSource: "ThreeNative.clipTrackBindings",
+        seamMeasurementPath: path.join(outDirectory, "seam-measurement.json")
       }
     };
     const gate = await call("sculpt_rig_gate", { payload: gatePayload });
@@ -428,20 +499,23 @@ async function verifyRelease(): Promise<Json> {
       meshPayload,
       gatePayload,
       expectedTools,
-      rawClips
+      rawClips,
+      browserReportPath,
+      bindingNegativeControl: browserEvidence.bindingNegativeControl,
+      seamEvidence
     });
     transcript.negativeControls = negativeControls;
     persistTranscript();
     const report: Json = {
       schemaVersion: 1,
       kind: "prd-346-sculpt-release",
-      package: { name: "threenative-sculpt-mcp", version: "0.2.0", serverPath },
+      package: { name: "threenative-sculpt-mcp", version: packageVersion, serverPath },
       sourceRevision: exportReport.sourceRevision,
       paths: { siblingCheckout: sibling.resolvedPath, showcase, reference: referencePath, glb: glbPath, mesh: meshPath, blenderReport: blenderReportPath, transcript: transcriptPath },
       pathResolution: sibling,
       glb: { sha256: sha256(glbPath), meshCount: exportReport.meshCount, vertexCount: exportReport.vertexCount, triangleCount: exportReport.triangleCount, boneCount: exportReport.boneCount, actionCount: exportReport.actionCount },
       blender: { counts: blenderCounts, actions: blenderReport.actions, renders: blenderReport.renders, geometryParity: blenderReport.geometryParity, meshDigestBefore: blenderReport.meshDigestBefore, meshDigestAfter: blenderReport.meshDigestAfter, sweep, deformation, bindRestore: blenderBindRestore },
-      mcp: { listedTools: actualTools, successfulCalls: calls.filter((callRecord) => callRecord.observed === "green").length, calls: calls.map((callRecord) => callRecord.request.name), clipCount: rawClips.length, actionAcceptance: acceptance, gates: gate.summary },
+      mcp: { listedTools: actualTools, successfulCalls: calls.filter((callRecord) => callRecord.observed === "green").length, calls: calls.map((callRecord) => callRecord.request.name), clipCount: rawClips.length, actionAcceptance: acceptance, gates: gate.summary, skinConditioning: { report: skinReport, multipartFixture: seamEvidence }, bindingEvidence: browserEvidence.bindingSamples },
       negativeControls,
       sourceWalk: { measured: rawWalkFeatures, authored: authoredFeatures, note: "The source GLB walk is retained as measured evidence; its authored Stage R replacement is explicit and target-conformant because the source clip measures as dash-speed root motion." }
     };
@@ -467,13 +541,16 @@ interface NegativeInput {
   gatePayload: Json;
   expectedTools: string[];
   rawClips: Json[];
+  browserReportPath: string;
+  bindingNegativeControl: Json;
+  seamEvidence: Json;
 }
 
 async function observedRedControls(input: NegativeInput): Promise<Json[]> {
   const controls: Json[] = [];
   const red = (id: string, observed: string, evidence: unknown, command?: string) => controls.push({ id, observed: "red", result: observed, evidence, ...(command ? { command } : {}) });
-  const alteredTools = input.expectedTools.filter((name) => name !== "sculpt_rig_gate");
-  if (JSON.stringify(alteredTools) !== JSON.stringify(input.expectedTools)) red("remove-registration", "tool-set mismatch", { expected: input.expectedTools, actual: alteredTools });
+  const removedRegistration = await copiedServerWithoutTool(input.serverPath, input.siblingWorkspace, input.outDirectory, "sculpt_rig_gate");
+  red("remove-registration", "tool-set mismatch", removedRegistration.response, `copied built server ${removedRegistration.controlDirectory}/dist/server.js; client.listTools()`);
 
   const missingKeys: Array<[string, string]> = [
     ["G1", "bindingSamples"], ["G2", "deformation"], ["G3", "bindRestore"], ["G4", "binding"], ["G5", "binding"], ["G6", "meshVisibility"], ["G7", "chainAnchors"], ["G8", "clips"], ["G9", "clips"], ["G10", "skinIntegritySweep"], ["G11", "meshParity"], ["G12", "rigReference"]
@@ -496,14 +573,27 @@ async function observedRedControls(input: NegativeInput): Promise<Json[]> {
   if (nudgeReport.ok) throw new Error("post-freeze nudge negative control passed");
   red("nudge-post-freeze-vertex", nudgeReport.status, nudgeReport.failures[0]?.toString());
 
-  const alteredThreshold = { speed: { baseline: 0.4, mutated: 0.2 }, expected: "differential mismatch" };
-  if (alteredThreshold.baseline !== alteredThreshold.mutated) red("change-TS-threshold", "differential mismatch", alteredThreshold);
-
-  const unbound = structuredClone(input.gatePayload);
-  record(unbound.bindingSamples, "bindingSamples").maxSampledBindingDelta = 1;
-  const unboundReport = runGates(unbound).byId("G1");
-  if (unboundReport.status !== "fail") throw new Error("unbound animation negative control did not fail G1");
-  red("unbind-animation-track", unboundReport.status, unboundReport.reason);
+  const negativeObservation = record(input.bindingNegativeControl.observation, "browser binding negative-control observation");
+  const negativeSamples = asArray(negativeObservation.samples, "browser negative-control samples");
+  const negativeDeltas = negativeSamples.map((sample, index) => asNumber(record(sample, `browser negative-control sample ${index}`).bindingDelta, `browser negative-control sample ${index}.bindingDelta`));
+  const normalBindingSamples = record(input.gatePayload.bindingSamples, "normal bindingSamples");
+  const normalClips = record(normalBindingSamples.clips, "normal bindingSamples.clips");
+  const mutatedClipName = asString(input.bindingNegativeControl.mutatedClip, "browser binding negative-control mutatedClip");
+  const mutatedBindingSamples = {
+    ...normalBindingSamples,
+    maxSampledBindingDelta: Math.max(...negativeDeltas, ...Object.values(normalClips).flatMap((value) => {
+      const clip = record(value, "normal binding clip");
+      return asArray(clip.samples, "normal binding clip.samples").map((sample, index) => asNumber(record(sample, `normal binding sample ${index}`).bindingDelta, `normal binding sample ${index}.bindingDelta`));
+    })),
+    clips: { ...normalClips, [mutatedClipName]: negativeObservation }
+  };
+  const unboundPayload = structuredClone(input.gatePayload);
+  unboundPayload.bindingSamples = mutatedBindingSamples;
+  const unboundReport = runGates(unboundPayload).byId("G1");
+  if (input.bindingNegativeControl.observed !== "red" || negativeObservation.unbound === undefined || unboundReport.status !== "fail") {
+    throw new Error("browser binding negative control did not retain an actual unbound track and a failing G1 result");
+  }
+  red("unbind-animation-track", unboundReport.status, { browserReportPath: input.browserReportPath, browser: input.bindingNegativeControl, gate: unboundReport.toJSON() }, `Raz playtest state from ${input.browserReportPath}; clipTrackBindings(mutatedClip)`);
 
   const noBaseline = structuredClone(input.gatePayload);
   delete record(noBaseline.skinIntegritySweep, "skinIntegritySweep").baseline;
@@ -539,6 +629,8 @@ async function observedRedControls(input: NegativeInput): Promise<Json[]> {
   const missingStance = runGates({ ...structuredClone(input.gatePayload), clips: input.rawClips }).byId("G8");
   if (missingStance.status !== "unevaluated") throw new Error("missing stance negative control did not become unevaluated");
   red("missing-stance", missingStance.status, missingStance.reason);
+
+  if (input.seamEvidence.trade === undefined) throw new Error("multipart seam negative-control report has no measured trade text");
 
   controls.push({ id: "negative-controls-summary", observed: "red", result: "all declared release controls above retained an observed red result", count: controls.length });
   return controls;

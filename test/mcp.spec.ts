@@ -153,6 +153,25 @@ describe("live MCP surface", () => {
     );
   });
 
+  it("rejects a skin result whose top-four loss exceeds the report threshold", async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "sculpt_skin_condition",
+      arguments: {
+        figureHeight: 1,
+        binding: {
+          positions: [[0, 0, 0], [0.001, 0, 0], [0.0015, 0, 0], [0.002, 0, 0], [0.0025, 0, 0]],
+          partIds: ["a", "b", "b", "b", "b"],
+          skinIndices: [0, 1, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0],
+          skinWeights: [0.7, 0.3, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+          jointCount: 6
+        }
+      }
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("exceeding the allowed");
+  });
+
   it("resolves the absolute sibling checkout and never uses the lane-relative candidate", () => {
     const engineLane = "/home/joao/projects/threenative/threenative-engine/.worktrees/prd-346-img2threejs-1-5-2-animation-proof";
     const resolution = resolveSiblingCheckout(engineLane, DEFAULT_SIBLING_CHECKOUT);
