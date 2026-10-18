@@ -1,6 +1,6 @@
 {
   "name": "threenative-sculpt-mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Fail-closed MCP gates for reference-guided procedural Three.js sculpting",
   "license": "Apache-2.0",
   "repository": {
@@ -42,7 +42,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "sharp": "0.35.3",
     "zod": "4.3.6"
   },
