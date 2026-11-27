@@ -17,7 +17,7 @@ The server communicates over stdio. Configure an MCP host to launch
 
 ## Surface
 
-- `sculpt_plan` — validate a reference and return the locked pass order plus relevant grimoire URIs;
+- `sculpt_plan` — validate a reference and return the locked pass order, 2–4 essential grimoire URIs (`optionalTopics` for more), and a `specTemplate` that passes `sculpt_spec_gate` once its `<fill>` placeholders are replaced (optional `tier`);
   `profile: "animated-character"` appends the ordered Stage R steps.
 - `sculpt_spec_gate` — validate the retained `ObjectSculptSpec` contract and depth minimums.
 - `sculpt_compare` — compare an existing capture with the reference globally and by normalized region.

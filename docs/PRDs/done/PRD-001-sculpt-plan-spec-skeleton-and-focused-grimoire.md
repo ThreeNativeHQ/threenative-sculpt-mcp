@@ -1,6 +1,8 @@
 # PRD-001 — `sculpt_plan` Pre-Valid Spec Skeleton and Bounded Grimoire Selection
 
-**Status:** DONE
+**Closed:** 2026-11-27 at `be0ef49`, archived to `done/`.
+
+**Status:** DONE — 2026-11-27. Every phase and acceptance box verified.
 **Priority:** P1 — Stops 5–10× `sculpt_spec_gate` retry loops per session (170× `missing required ObjectSculptSpec region` across 12 Studio runs) and 40 KB bulk `sculpt_grimoire` truncations.
 **Complexity:** 3 (LOW)
 **Owner:** Unassigned
