@@ -50,6 +50,55 @@ const REQUIRED_REGIONS = [
   "qualityTargets"
 ] as const;
 
+// JSON path an agent must fill for each depth counter in COMPLEXITY_THRESHOLDS.
+const DEPTH_PATHS: Record<string, string> = {
+  macroComponents: "componentTree[level=macro]",
+  mesoComponents: "componentTree[level=meso]",
+  microFeatureGroups: "componentTree[].localFeatures",
+  materialLayers: "materials",
+  repetitionSystems: "repetitionSystems",
+  reviewViewpoints: "qualityTargets.reviewViewpoints",
+  detailInventory: "preSpecAssessment.detailInventory.details"
+};
+
+const VIEWPOINTS = ["front", "three-quarter", "side", "back", "top"];
+const FILL = "<fill>";
+
+/**
+ * A spec that already satisfies every structural and depth check for `tier`.
+ * Placeholder strings are "<fill>": replace them with real values from the reference.
+ */
+export function buildSpecSkeleton(tier: ComplexityTier, targetName: string): Record<string, unknown> {
+  const t = COMPLEXITY_THRESHOLDS[tier];
+  const ids = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) => `${prefix}-${i + 1}`);
+  const macro = ids("macro", t.macroComponents).map((id, i) => ({
+    id,
+    level: "macro",
+    // all micro feature groups hang off the first macro component
+    localFeatures: i === 0 ? Array.from({ length: t.microFeatureGroups }, () => FILL) : []
+  }));
+  const meso = ids("meso", t.mesoComponents).map((id) => ({ id, level: "meso", localFeatures: [] }));
+  const { detailInventory: _details, ...minimumSpecDepth } = t;
+  return {
+    schemaVersion: "2.1",
+    targetName,
+    suitability: "pass",
+    coordinateFrame: {},
+    silhouette: {},
+    componentTree: [...macro, ...meso],
+    materials: ids("material", t.materialLayers).map((id) => ({ id, name: FILL })),
+    repetitionSystems: ids("repeat", t.repetitionSystems).map((id) => ({ id, name: FILL })),
+    proceduralStrategy: [FILL],
+    preSpecAssessment: {
+      complexity: { tier },
+      detailInventory: { details: ids("detail", t.detailInventory).map((id) => ({ id, name: FILL })) }
+    },
+    qualityContract: { minimumSpecDepth },
+    qualityTargets: { reviewViewpoints: VIEWPOINTS.slice(0, t.reviewViewpoints) }
+  };
+}
+
 export function gateObjectSculptSpec(value: unknown): SpecGateResult {
   const issues: SpecGateIssue[] = [];
   const spec = object(value);
@@ -142,7 +191,7 @@ export function gateObjectSculptSpec(value: unknown): SpecGateResult {
       if (actual < required) {
         issues.push({
           region,
-          message: `${region} is below the ${tier} depth threshold (${actual} < ${required})`
+          message: `${DEPTH_PATHS[region] ?? region} needs ${required} (${tier} tier), has ${actual}`
         });
       }
       const declared = declaredMinimums?.[region];

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
-import { gateObjectSculptSpec } from "../src/spec.js";
+import { COMPLEXITY_THRESHOLDS } from "../src/constants.js";
+import { buildSpecSkeleton, gateObjectSculptSpec } from "../src/spec.js";
 
 function json(path: string) {
   return JSON.parse(readFileSync(path, "utf8")) as Record<string, any>;
@@ -57,5 +58,28 @@ describe("ObjectSculptSpec runtime gate", () => {
     expect(result.issues.map((issue) => issue.region)).toEqual(
       expect.arrayContaining(["macroComponents", "mesoComponents", "microFeatureGroups", "detailInventory"])
     );
+  });
+});
+
+describe("buildSpecSkeleton", () => {
+  it.each(Object.keys(COMPLEXITY_THRESHOLDS) as Array<keyof typeof COMPLEXITY_THRESHOLDS>)(
+    "passes the spec gate as-is for the %s tier",
+    (tier) => {
+      const skeleton = buildSpecSkeleton(tier, "Test object");
+      const result = gateObjectSculptSpec(skeleton);
+      expect(result.issues).toEqual([]);
+      expect(result).toMatchObject({ valid: true, tier });
+      const schema = json("schema/object-sculpt-spec.runtime.schema.json");
+      const validate = new Ajv2020({ strict: true, allErrors: true }).compile(schema);
+      expect(validate(skeleton)).toBe(true);
+    }
+  );
+
+  it("reports a dot-path and exact counts for a depth shortfall", () => {
+    const skeleton = buildSpecSkeleton("moderate", "Test object") as Record<string, any>;
+    skeleton.materials = [{ id: "only" }];
+    expect(gateObjectSculptSpec(skeleton).issues).toEqual([
+      { region: "materialLayers", message: "materials needs 2 (moderate tier), has 1" }
+    ]);
   });
 });
