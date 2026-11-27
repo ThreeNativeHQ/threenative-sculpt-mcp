@@ -2,6 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v4";
 import {
   ANIMATION_GRIMOIRE_TOPICS,
+  COMPLEXITY_THRESHOLDS,
+  type ComplexityTier,
   PASS_ORDER,
   SCULPT_PROFILES,
   STAGE_R_STEPS
@@ -34,7 +36,7 @@ import { runGates } from "./rig-gates.js";
 import { gatePass } from "./gate.js";
 import { findGrimoirePage, loadGrimoireCatalog } from "./grimoire.js";
 import { compareImages, inspectImage } from "./image.js";
-import { gateObjectSculptSpec } from "./spec.js";
+import { buildSpecSkeleton, gateObjectSculptSpec } from "./spec.js";
 
 function response(payload: unknown, isError = false) {
   return {
@@ -133,6 +135,18 @@ function relevantTopics(intent: string, profile: (typeof SCULPT_PROFILES)[number
   return [...new Set(topics)].filter((topic) => validTopics.has(topic));
 }
 
+// Default reads stay <= 3 topics (<= 4 animated) and < 14 KB; the rest is optional reading.
+function essentialTopics(intent: string, profile: (typeof SCULPT_PROFILES)[number]): string[] {
+  const base = ["intake/quality_contract", "intake/detail_inventory"];
+  if (profile === "animated-character") {
+    return [...base, "readiness/animation_contract", "readiness/action_rigging"];
+  }
+  if (profile !== "generic" || /character|creature|person|face|humanoid|animal/i.test(intent)) {
+    return [...base, "character/reconstruction"];
+  }
+  return [...base, "review/gates_reference"];
+}
+
 export async function createSculptServer(): Promise<McpServer> {
   const catalog = await loadGrimoireCatalog();
   const validTopics = new Set(catalog.pages.map((page) => page.topic));
@@ -163,18 +177,23 @@ export async function createSculptServer(): Promise<McpServer> {
     "sculpt_plan",
     {
       description:
-        "Validate a reference image and return the locked eight-pass sculpt order plus relevant technique-safe grimoire resources.",
+        "Validate a reference image and return the locked eight-pass sculpt order, 2-4 essential grimoire resources (more under optionalTopics), and a specTemplate that passes sculpt_spec_gate once placeholders are filled.",
       inputSchema: z.object({
         referencePath: z.string().trim().min(1),
         intent: z.string().trim().min(1).max(500),
-        profile: z.enum(SCULPT_PROFILES).default("generic")
+        profile: z.enum(SCULPT_PROFILES).default("generic"),
+        tier: z
+          .enum(Object.keys(COMPLEXITY_THRESHOLDS) as [ComplexityTier, ...ComplexityTier[]])
+          .optional()
+          .describe("Complexity tier for specTemplate; defaults to moderate (complex for character profiles).")
       }),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
-    async ({ referencePath, intent, profile }) => {
+    async ({ referencePath, intent, profile, tier }) => {
       try {
         const image = await inspectImage(referencePath, "reference");
-        const topics = relevantTopics(intent, profile, validTopics);
+        const all = relevantTopics(intent, profile, validTopics);
+        const topics = essentialTopics(intent, profile).filter((topic) => validTopics.has(topic));
         if (topics.length === 0) throw new Error("no technique-safe grimoire topics are available");
         return response({
           reference: { path: referencePath, width: image.width, height: image.height },
@@ -183,6 +202,8 @@ export async function createSculptServer(): Promise<McpServer> {
           passes: PASS_ORDER,
           ...(profile === "animated-character" ? { stageR: STAGE_R_STEPS } : {}),
           grimoireResources: topics.map((topic) => `sculpt://grimoire/${topic}`),
+          optionalTopics: all.filter((topic) => !topics.includes(topic)).map((topic) => `sculpt://grimoire/${topic}`),
+          specTemplate: buildSpecSkeleton(tier ?? (profile === "generic" ? "moderate" : "complex"), intent),
           contract: "write and gate ObjectSculptSpec before authoring src/render source"
         });
       } catch (error) {
@@ -575,7 +596,7 @@ export { gatePass } from "./gate.js";
 export { loadGrimoireCatalog, resourceSafetyReason } from "./grimoire.js";
 export { compareImages, inspectImage } from "./image.js";
 export { ciede2000, deltaERgb, srgbToLab } from "./math/color-metrics.js";
-export { gateObjectSculptSpec } from "./spec.js";
+export { buildSpecSkeleton, gateObjectSculptSpec } from "./spec.js";
 export {
   accepts,
   bandFeatures,

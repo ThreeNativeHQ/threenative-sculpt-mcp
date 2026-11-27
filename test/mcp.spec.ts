@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
-import { createSculptServer } from "../src/index.js";
+import { createSculptServer, gateObjectSculptSpec } from "../src/index.js";
+import { loadGrimoireCatalog } from "../src/grimoire.js";
 import { DEFAULT_SIBLING_CHECKOUT, resolveSiblingCheckout } from "../scripts/verify-release.mts";
 
 const expectedTools = [
@@ -116,6 +117,34 @@ describe("live MCP surface", () => {
       authority: "diagnostic-only",
       overall: { score: 1 }
     });
+  });
+
+  it.each([
+    { profile: "generic", intent: "a wooden crate", max: 3 },
+    { profile: "character", intent: "bespoke character", max: 3 },
+    { profile: "animated-character", intent: "animated character", max: 4 }
+  ])("bounds the $profile plan to $max essential topics under 14 KB with a gate-valid specTemplate", async ({ profile, intent, max }) => {
+    const client = await connectedClient();
+    const reference = await referenceImage();
+    const plan = await client.callTool({
+      name: "sculpt_plan",
+      arguments: { referencePath: reference, intent, profile }
+    });
+    const payload = JSON.parse(plan.content.find((item) => item.type === "text")?.text ?? "{}") as {
+      grimoireResources: string[];
+      optionalTopics: string[];
+      specTemplate: unknown;
+    };
+    expect(payload.grimoireResources.length).toBeLessThanOrEqual(max);
+    const catalog = await loadGrimoireCatalog();
+    const bytes = payload.grimoireResources.reduce(
+      (sum, uri) => sum + Buffer.byteLength(catalog.pages.find((page) => page.uri === uri)?.text ?? ""),
+      0
+    );
+    expect(bytes).toBeLessThan(14 * 1024);
+    expect(payload.optionalTopics).toContain("sculpt://grimoire/review/self_correction");
+    expect(payload.grimoireResources).not.toContain("sculpt://grimoire/review/self_correction");
+    expect(gateObjectSculptSpec(payload.specTemplate).valid).toBe(true);
   });
 
   it("routes an animated-character plan through the complete Stage R order", async () => {
