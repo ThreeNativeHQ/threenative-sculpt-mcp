@@ -1,19 +1,28 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { existsSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSculptServer } from "../src/index.js";
+import { DEFAULT_SIBLING_CHECKOUT, resolveSiblingCheckout } from "../scripts/verify-release.mts";
 
 const expectedTools = [
   "sculpt_compare",
   "sculpt_grimoire",
   "sculpt_pass_gate",
   "sculpt_plan",
-  "sculpt_spec_gate"
-];
+  "sculpt_spec_gate",
+  "sculpt_clip_measure",
+  "sculpt_rig_reference",
+  "sculpt_rig_spec_gate",
+  "sculpt_skin_condition",
+  "sculpt_mesh_parity",
+  "sculpt_action_design",
+  "sculpt_rig_gate"
+].sort();
 
 describe("live MCP surface", () => {
   const clients: Client[] = [];
@@ -44,7 +53,7 @@ describe("live MCP surface", () => {
     return file;
   }
 
-  it("lists exactly the five contracted tools", async () => {
+  it("lists exactly the twelve contracted tools", async () => {
     const client = await connectedClient();
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual(expectedTools);
@@ -107,6 +116,72 @@ describe("live MCP surface", () => {
       authority: "diagnostic-only",
       overall: { score: 1 }
     });
+  });
+
+  it("routes an animated-character plan through the complete Stage R order", async () => {
+    const client = await connectedClient();
+    const reference = await referenceImage();
+    const result = await client.callTool({
+      name: "sculpt_plan",
+      arguments: {
+        referencePath: reference,
+        intent: "animated character",
+        profile: "animated-character"
+      }
+    });
+    expect(result.isError).not.toBe(true);
+    const text = result.content.find((item) => item.type === "text")?.text ?? "{}";
+    const payload = JSON.parse(text) as {
+      profile: string;
+      stageR: Array<{ id: string }>;
+      grimoireResources: string[];
+    };
+    expect(payload.profile).toBe("animated-character");
+    expect(payload.stageR.map((step) => step.id)).toEqual([
+      "rig-contract-read",
+      "glb-rig-reference",
+      "mesh-repair",
+      "mesh-freeze",
+      "rig-payload-validate",
+      "rig-bind",
+      "mesh-parity-verify",
+      "clip-measure",
+      "rig-gates"
+    ]);
+    expect(payload.grimoireResources).toContain(
+      "sculpt://grimoire/readiness/animation_contract"
+    );
+  });
+
+  it("rejects a skin result whose top-four loss exceeds the report threshold", async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: "sculpt_skin_condition",
+      arguments: {
+        figureHeight: 1,
+        binding: {
+          positions: [[0, 0, 0], [0.001, 0, 0], [0.0015, 0, 0], [0.002, 0, 0], [0.0025, 0, 0]],
+          partIds: ["a", "b", "b", "b", "b"],
+          skinIndices: [0, 1, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0],
+          skinWeights: [0.7, 0.3, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+          jointCount: 6
+        }
+      }
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("exceeding the allowed");
+  });
+
+  it("resolves the absolute sibling checkout and never uses the lane-relative candidate", () => {
+    const engineLane = "/home/joao/projects/threenative/threenative-engine/.worktrees/prd-346-img2threejs-1-5-2-animation-proof";
+    const resolution = resolveSiblingCheckout(engineLane, DEFAULT_SIBLING_CHECKOUT);
+    expect(resolution.resolvedPath).toBe(DEFAULT_SIBLING_CHECKOUT);
+    expect(existsSync(path.join(resolution.resolvedPath, "package.json"))).toBe(true);
+    expect(resolution.laneRelativeCandidate).toBe(
+      "/home/joao/projects/threenative/threenative-engine/.worktrees/threenative-sculpt-mcp"
+    );
+    expect(existsSync(resolution.laneRelativeCandidate)).toBe(false);
+    expect(resolution.laneRelativeLookupUsed).toBe(false);
   });
 
   it("makes the live pass gate retry when semantic review is omitted", async () => {
