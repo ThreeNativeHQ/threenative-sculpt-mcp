@@ -38,7 +38,7 @@ import { gateObjectSculptSpec } from "./spec.js";
 
 function response(payload: unknown, isError = false) {
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
     ...(isError ? { isError: true } : {})
   };
 }
@@ -191,17 +191,69 @@ export async function createSculptServer(): Promise<McpServer> {
     }
   );
 
-  server.registerTool(
-    "sculpt_spec_gate",
-    {
+  const specGateInputSchema = z
+    .object({
+      schemaVersion: z.string().optional().describe('Contract version, e.g. "2.1".'),
+      targetName: z.string().optional(),
+      suitability: z.enum(["pass", "conditional", "request-input", "stop"]).optional(),
+      coordinateFrame: z.record(z.string(), z.unknown()).optional(),
+      silhouette: z.record(z.string(), z.unknown()).optional(),
+      componentTree: z
+        .array(
+          z
+            .object({
+              id: z.string(),
+              level: z.enum(["macro", "meso", "micro"]).optional(),
+              localFeatures: z.array(z.unknown()).optional()
+            })
+            .passthrough()
+        )
+        .optional(),
+      materials: z.array(z.object({ id: z.string() }).passthrough()).optional(),
+      repetitionSystems: z.array(z.unknown()).optional(),
+      proceduralStrategy: z.array(z.string()).optional(),
+      preSpecAssessment: z
+        .object({
+          complexity: z.object({ tier: z.enum(["simple", "moderate", "complex", "ultra-complex"]) }).passthrough(),
+          detailInventory: z.object({ details: z.array(z.unknown()) }).passthrough()
+        })
+        .passthrough()
+        .optional()
+        .describe("complexity.tier plus detailInventory.details array matching tier minimum."),
+      qualityContract: z
+        .object({
+          minimumSpecDepth: z
+            .object({
+              macroComponents: z.number().int().min(0),
+              mesoComponents: z.number().int().min(0),
+              microFeatureGroups: z.number().int().min(0),
+              materialLayers: z.number().int().min(0),
+              repetitionSystems: z.number().int().min(0),
+              reviewViewpoints: z.number().int().min(0)
+            })
+            .passthrough()
+        })
+        .passthrough()
+        .optional(),
+      qualityTargets: z.object({ reviewViewpoints: z.array(z.string()) }).passthrough().optional()
+    })
+    .passthrough();
+
+  server.registerTool("sculpt_spec_gate", {
       description:
         "Validate the MCP runtime ObjectSculptSpec contract and canonical complexity depth thresholds before code is written.",
-      inputSchema: z.object({ spec: z.record(z.string(), z.unknown()) }),
+      inputSchema: z.object({ spec: specGateInputSchema }),
       annotations: { readOnlyHint: true, idempotentHint: true }
     },
     async ({ spec }) => {
       const result = gateObjectSculptSpec(spec);
-      return result.valid ? response(result) : response(result, true);
+      if (result.valid) return response(result);
+      const tier = result.tier ?? "simple";
+      const d = result.requiredDepth;
+      const hint = d
+        ? `Minimal shape for tier="${tier}": {schemaVersion:"2.1", targetName, suitability:"pass", coordinateFrame:{}, silhouette:{}, componentTree:[{id,level:"macro"|"meso"|"micro",localFeatures:[]}], materials:[{id}], repetitionSystems:[], proceduralStrategy:["..."], preSpecAssessment:{complexity:{tier:"${tier}"}, detailInventory:{details:[{id} x${d.detailInventory}]}}, qualityContract:{minimumSpecDepth:{macroComponents:${d.macroComponents}, mesoComponents:${d.mesoComponents}, microFeatureGroups:${d.microFeatureGroups}, materialLayers:${d.materialLayers}, repetitionSystems:${d.repetitionSystems}, reviewViewpoints:${d.reviewViewpoints}}}, qualityTargets:{reviewViewpoints:[...x${d.reviewViewpoints}]}}.`
+        : undefined;
+      return response(hint ? { ...result, hint } : result, true);
     }
   );
 
